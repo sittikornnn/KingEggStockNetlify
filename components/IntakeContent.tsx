@@ -144,37 +144,31 @@ export default function IntakeContent() {
     });
   };
 
-  // ดึงข้อมูล Master Data ล่าสุด (รวมถึงรายการ Pallet ที่ว่าง)
-  const fetchMasterData = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/intake?startDate=${startDate}&endDate=${endDate}`);
-      const json = await res.json();
-      if (json.status === "success") {
-        setChickenHouses(json.data.ChickenHouses || []);
-        setRoom(json.data.Room || []);
-        setPallet(json.data.Pallet || []); // ดึงรายการ Pallet ล่าสุด
-        setEggCategories(json.data.EggCategories || []);
-        setAllEggTypes(json.data.EggTypes || []);
-        if (json.data.buildings) setBuildings(json.data.buildings);
-        if (json.data.locations) setLocations(json.data.locations);
-      }
-    } catch (_error) {
-      console.error("Fetch Master Data Error:", _error);
-    }
-  }, [startDate, endDate]);
-
-  const fetchIntakeHistory = useCallback(async (start: string, end: string) => {
+  // ดึงข้อมูล Master Data และ History ทั้งหมดในคำขอเดียว
+  const fetchPageData = useCallback(async (start: string, end: string) => {
     setIsLoading(true);
     try {
       const res = await fetch(`/api/intake?startDate=${start}&endDate=${end}`);
       const json = await res.json();
-      if (json.status === "success" && json.data.intakeHistory) {
-        const parsed = parseHistoryData(json.data.intakeHistory);
-        setIntakeList(parsed);
+      if (json.status === "success" && json.data) {
+        // อัปเดต Master Data
+        setChickenHouses(json.data.ChickenHouses || []);
+        setRoom(json.data.Room || []);
+        setPallet(json.data.Pallet || []);
+        setEggCategories(json.data.EggCategories || []);
+        setAllEggTypes(json.data.EggTypes || []);
+        if (json.data.buildings) setBuildings(json.data.buildings);
+        if (json.data.locations) setLocations(json.data.locations);
+
+        // อัปเดต Intake History
+        if (json.data.intakeHistory) {
+          const parsed = parseHistoryData(json.data.intakeHistory);
+          setIntakeList(parsed);
+        }
       }
     } catch (_error) {
-      console.error(_error);
-      showAlert("error", "ดึงข้อมูลล้มเหลว", "ไม่สามารถโหลดข้อมูลประวัติในช่วงวันที่เลือกได้");
+      console.error("Fetch Page Data Error:", _error);
+      showAlert("error", "ดึงข้อมูลล้มเหลว", "ไม่สามารถโหลดข้อมูลล่าสุดได้");
     } finally {
       setIsLoading(false);
     }
@@ -223,11 +217,8 @@ export default function IntakeContent() {
 
         setShowForm(false);
 
-        // โหลดข้อมูลประวัติและ Master Data (รายการ Pallet ล่าสุด) ใหม่
-        await Promise.all([
-          fetchIntakeHistory(startDate, endDate),
-          fetchMasterData()
-        ]);
+        // โหลดข้อมูลทั้งหมดใหม่เพียง 1 รอบ
+        await fetchPageData(startDate, endDate);
       } else {
         showAlert("error", "เกิดข้อผิดพลาดจากระบบ", resData.message || "ไม่สามารถบันทึกข้อมูลได้");
       }
@@ -260,7 +251,7 @@ export default function IntakeContent() {
         showAlert("success", "อัปเดตข้อมูลสำเร็จ", "ปรับเปลี่ยนตำแหน่งคลังจัดเก็บเรียบร้อยแล้ว");
         setShowLocationModal(false);
         setEditingRow(null);
-        fetchIntakeHistory(startDate, endDate);
+        fetchPageData(startDate, endDate);
       } else {
         showAlert("error", "เกิดข้อผิดพลาด", resData.message || "ไม่สามารถบันทึกตำแหน่งได้");
       }
@@ -278,24 +269,23 @@ export default function IntakeContent() {
     setShowLocationModal(true);
   };
 
+  // ดึงข้อมูล Authenticated User เพียงครั้งเดียวเมื่อ Render หน้าเว็บ
   useEffect(() => {
-    fetchMasterData();
-
     async function getUser() {
       const { data: { user } } = await supabase.auth.getUser();
       if (user && user.email) {
         setUserId(user.email);
       }
     }
-
     getUser();
-  }, [fetchMasterData, supabase.auth]);
+  }, [supabase.auth]);
 
+  // ดึงข้อมูลจาก API เฉพาะเมื่อช่วงวันที่เลือกมีการเปลี่ยนแปลง
   useEffect(() => {
     if (startDate && endDate) {
-      fetchIntakeHistory(startDate, endDate);
+      fetchPageData(startDate, endDate);
     }
-  }, [startDate, endDate, fetchIntakeHistory]);
+  }, [startDate, endDate, fetchPageData]);
 
   const filteredEggTypes = allEggTypes.filter(type => type.ID_Category === Number(selectedCategory));
   const filteredLocations = locations.filter(loc => loc.Name_Building === selectedBuilding);
