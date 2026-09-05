@@ -7,6 +7,9 @@ import SellModal from "@/components/SellModal";
 import IntakeNotify from "@/components/Notify";
 import { createClient } from "@/lib/supabase/client";
 
+// ✅ 1. สร้าง Supabase Instance ไว้นอก Component เพียงครั้งเดียว
+const supabase = createClient();
+
 interface DBCategory {
   ID_Category: number;
   Name_Category: string;
@@ -55,7 +58,6 @@ interface AlertState {
   message: string;
 }
 
-// 👉 เพิ่ม Interface สำหรับ Response ของ Stock API เพื่อหลีกเลี่ยงการใช้ 'any'
 interface StockApiResponse {
   success?: boolean;
   error?: string;
@@ -119,16 +121,11 @@ export default function StockContent() {
     []
   );
 
-  // 🛠️ แก้ไข Warning: missing dependency 'fetchData' โดยการครอบด้วย useCallback
-  const fetchData = useCallback(async () => {
+  // ✅ 2. แยกดึงเฉพาะข้อมูล Stock (เรียกใช้ซ้ำได้โดยไม่ต้องดึง Master Data ใหม่)
+  const fetchStockData = useCallback(async () => {
     try {
-      const [resStock, resCategory] = await Promise.all([
-        fetch("/api/stock"),
-        fetch("/api/egg-category"),
-      ]);
-
+      const resStock = await fetch("/api/stock");
       const stockData = await resStock.json();
-      const categoryData = await resCategory.json();
 
       if (resStock.ok && Array.isArray(stockData)) {
         const formattedStocks = transformSupabaseToStock(stockData);
@@ -140,12 +137,8 @@ export default function StockContent() {
           stockData.error || "ไม่สามารถติดต่อฐานข้อมูลคลังสินค้าได้"
         );
       }
-
-      if (resCategory.ok && Array.isArray(categoryData)) {
-        setDbCategories(categoryData);
-      }
     } catch (err) {
-      console.error("Error fetching data:", err);
+      console.error("Error fetching stock data:", err);
       showAlert(
         "error",
         "การเชื่อมต่อล้มเหลว",
@@ -154,23 +147,35 @@ export default function StockContent() {
     }
   }, [showAlert]);
 
-  const fetchCurrentUser = useCallback(async () => {
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (user?.email) {
-      setCurrentUserEmail(user.email);
-    }
-  }, []);
-
+  // ✅ 3. ดึง Master Data และ User Info แค่ครั้งเดียวตอน Initial Load
   useEffect(() => {
-    fetchData();
-    fetchCurrentUser();
-  }, [fetchData, fetchCurrentUser]);
+    // ดึงข้อมูล User
+    async function getUser() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user?.email) setCurrentUserEmail(user.email);
+    }
 
+    // ดึง Categories แค่ครั้งเดียว
+    async function getCategories() {
+      try {
+        const res = await fetch("/api/egg-category");
+        const categoryData = await res.json();
+        if (res.ok && Array.isArray(categoryData)) {
+          setDbCategories(categoryData);
+        }
+      } catch (err) {
+        console.error("Error fetching categories:", err);
+      }
+    }
+
+    getUser();
+    getCategories();
+    fetchStockData();
+  }, [fetchStockData]);
+
+  // ✅ 4. ลดภาระการคำนวณ Date ใน FIFO Sort
   const fifoStocks = useMemo(() => {
-    return [...stocks]
+    return stocks
       .filter((item) => {
         const hasQty = item.SumEggQty > 0 || item.EggWeight > 0;
         const hasLocation =
@@ -267,7 +272,7 @@ export default function StockContent() {
       });
 
       const contentType = res.headers.get("content-type");
-      let data: StockApiResponse = {}; // 🛠️ แก้ไข: เปลี่ยนชนิดข้อมูลจาก any เป็น StockApiResponse
+      let data: StockApiResponse = {};
       if (contentType && contentType.includes("application/json")) {
         data = (await res.json()) as StockApiResponse;
       }
@@ -279,7 +284,7 @@ export default function StockContent() {
           "ระบบทำการลงบันทึกประวัติ Transaction เรียบร้อยแล้ว"
         );
         handleCloseModal();
-        fetchData();
+        fetchStockData(); // ✅ ดึงเฉพาะข้อมูล Stock ใหม่
       } else {
         showAlert(
           "error",
@@ -294,8 +299,7 @@ export default function StockContent() {
         "การเชื่อมต่อล้มเหลว",
         "ไม่สามารถติดต่อและเชื่อมต่อกับเซิร์ฟเวอร์หลังบ้านได้"
       );
-    }
-    finally {
+    } finally {
       setIsLoading(false);
     }
   };
