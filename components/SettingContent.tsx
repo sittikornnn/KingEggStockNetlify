@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { SignUpForm } from "@/components/sign-up-form";
 
 interface House { ID_House: number; Name_House: string; }
@@ -18,8 +18,20 @@ interface Employee {
 }
 
 type SettingTab = "house" | "room" | "pallet" | "category" | "eggtype" | "employee";
-
 type ItemRecord = Record<string, string | number | boolean | null>;
+
+const extractArrayData = <T,>(resData: unknown): T[] => {
+  if (Array.isArray(resData)) return resData as T[];
+  if (
+    resData && 
+    typeof resData === "object" && 
+    "data" in resData && 
+    Array.isArray((resData as { data: unknown }).data)
+  ) {
+    return (resData as { data: T[] }).data;
+  }
+  return [];
+};
 
 export default function SettingsClient() {
   const [activeTab, setActiveTab] = useState<SettingTab>("house");
@@ -47,62 +59,8 @@ export default function SettingsClient() {
     categoryId: 0
   });
 
-  const extractArrayData = <T,>(resData: unknown): T[] => {
-    if (Array.isArray(resData)) return resData as T[];
-    if (
-      resData && 
-      typeof resData === "object" && 
-      "data" in resData && 
-      Array.isArray((resData as { data: unknown }).data)
-    ) {
-      return (resData as { data: T[] }).data;
-    }
-    return [];
-  };
-
-  const fetchData = useCallback(async () => {
-    try {
-      const apiTab = activeTab === "category" ? "eggcategory" : activeTab;
-      const res = await fetch(`/api/settings?tab=${apiTab}`);
-      const rawData = await res.json();
-
-      if (activeTab === "house") setHouses(extractArrayData<House>(rawData));
-      if (activeTab === "room") setRooms(extractArrayData<Room>(rawData));
-      if (activeTab === "pallet") setPallets(extractArrayData<Pallet>(rawData));
-      if (activeTab === "category") setCategories(extractArrayData<EggCategory>(rawData));
-      if (activeTab === "eggtype") setEggTypes(extractArrayData<EggType>(rawData));
-      if (activeTab === "employee") setEmployees(extractArrayData<Employee>(rawData));
-    } catch (err) {
-      console.error("Failed to fetch setting data:", err);
-    }
-  }, [activeTab]);
-
-  const fetchCategoriesOnly = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/settings?tab=eggcategory`);
-      const rawData = await res.json();
-      const safeData = extractArrayData<EggCategory>(rawData);
-      setCategories(safeData);
-    } catch (err) {
-      console.error("Failed to fetch categories only:", err);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchData();
-    if (activeTab !== "category") {
-      fetchCategoriesOnly();
-    }
-    setFormData({ id: "", name: "", extraName: "", categoryId: "" });
-    setEditingId(null);
-  }, [activeTab, fetchData, fetchCategoriesOnly]);
-
-  const triggerSuccessAlert = () => {
-    setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 2000);
-  };
-
-  const getTabSchema = () => {
+  // ใช้ useMemo เพื่อคำนวณ Schema ตาม Active Tab โดยไม่ต้องสร้าง Object ใหม่บ่อยๆ
+  const schema = useMemo(() => {
     switch (activeTab) {
       case "house":
         return { idCol: "ID_House", nameCol: "Name_House", idLabel: "[ID_House]", nameLabel: "[Name_House]", placeholder: "เช่น PH07" };
@@ -117,9 +75,52 @@ export default function SettingsClient() {
       case "employee":
         return { idCol: "ID_Emp", nameCol: "FirstName_Emp", idLabel: "[ID_Emp]", nameLabel: "[FirstName_Emp]", placeholder: "ชื่อจริงพนักงาน" };
     }
-  };
+  }, [activeTab]);
 
-  const schema = getTabSchema();
+  const fetchCategoriesOnly = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/settings?tab=eggcategory`);
+      const rawData = await res.json();
+      setCategories(extractArrayData<EggCategory>(rawData));
+    } catch (err) {
+      console.error("Failed to fetch categories only:", err);
+    }
+  }, []);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const apiTab = activeTab === "category" ? "eggcategory" : activeTab;
+      const res = await fetch(`/api/settings?tab=${apiTab}`);
+      const rawData = await res.json();
+      const listData = extractArrayData(rawData);
+
+      switch (activeTab) {
+        case "house": setHouses(listData as House[]); break;
+        case "room": setRooms(listData as Room[]); break;
+        case "pallet": setPallets(listData as Pallet[]); break;
+        case "category": setCategories(listData as EggCategory[]); break;
+        case "eggtype": setEggTypes(listData as EggType[]); break;
+        case "employee": setEmployees(listData as Employee[]); break;
+      }
+    } catch (err) {
+      console.error("Failed to fetch setting data:", err);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    fetchData();
+    // โหลด Category เฉพาะตอนยังไม่มีข้อมูล และไม่ได้อยู่ในหน้า Category เองเพื่อลด Request ซ้ำซ้อน
+    if (activeTab !== "category" && categories.length === 0) {
+      fetchCategoriesOnly();
+    }
+    setFormData({ id: "", name: "", extraName: "", categoryId: "" });
+    setEditingId(null);
+  }, [activeTab, fetchData, fetchCategoriesOnly, categories.length]);
+
+  const triggerSuccessAlert = useCallback(() => {
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 2000);
+  }, []);
 
   const handleInsertData = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -220,6 +221,13 @@ export default function SettingsClient() {
       console.error("Error deleting item:", err);
     }
   };
+
+  // สร้าง Map ไว้ดึงชื่อ Category ในตาราง eggtype ได้เร็วขึ้น (O(1) แทนการใช้ .find O(N))
+  const categoryMap = useMemo(() => {
+    const map = new Map<number, string>();
+    categories.forEach((c) => map.set(c.ID_Category, c.Name_Category));
+    return map;
+  }, [categories]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-6 md:p-10 font-sans">
@@ -327,7 +335,7 @@ export default function SettingsClient() {
                 <input
                   type="number"
                   value={formData.id}
-                  onChange={(e) => setFormData({ ...formData, id: e.target.value })}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, id: e.target.value }))}
                   placeholder="ปล่อยว่างหากระบบรันอัตโนมัติ (Identity)"
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs font-mono focus:border-amber-500 focus:outline-none"
                 />
@@ -340,7 +348,7 @@ export default function SettingsClient() {
                 <input
                   type="text"
                   value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
                   placeholder={schema.placeholder}
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs font-semibold focus:border-amber-500 focus:outline-none"
                   required
@@ -352,7 +360,7 @@ export default function SettingsClient() {
                   <label className="block text-xs font-semibold text-slate-400 mb-1">[ID_Category] สังกัด *</label>
                   <select
                     value={formData.categoryId}
-                    onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, categoryId: e.target.value }))}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs font-semibold focus:border-amber-500 focus:outline-none cursor-pointer"
                     required
                   >
@@ -367,7 +375,7 @@ export default function SettingsClient() {
               <button
                 type="submit"
                 disabled={isSaving}
-                className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs transition-all cursor-pointer"
+                className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs transition-all cursor-pointer disabled:opacity-50"
               >
                 {isSaving ? "⏳ บันทึกข้อมูล..." : "ปุ่มกดเพิ่มข้อมูล"}
               </button>
@@ -395,7 +403,7 @@ export default function SettingsClient() {
                       <td className="p-3 text-center text-amber-400 font-mono">{h.ID_House}</td>
                       <td className="p-3">
                         {editingId === h.ID_House ? (
-                          <input type="text" value={editFields.name} onChange={(e) => setEditFields({ ...editFields, name: e.target.value })} className="bg-slate-900 border border-amber-500 text-white rounded px-2 py-1 text-xs w-full" />
+                          <input type="text" value={editFields.name} onChange={(e) => setEditFields((prev) => ({ ...prev, name: e.target.value }))} className="bg-slate-900 border border-amber-500 text-white rounded px-2 py-1 text-xs w-full" />
                         ) : (
                           <span className="text-white font-semibold">{h.Name_House}</span>
                         )}
@@ -421,7 +429,7 @@ export default function SettingsClient() {
                       <td className="p-3 text-center text-amber-400 font-mono">{r.ID_Room}</td>
                       <td className="p-3">
                         {editingId === r.ID_Room ? (
-                          <input type="text" value={editFields.name} onChange={(e) => setEditFields({ ...editFields, name: e.target.value })} className="bg-slate-900 border border-amber-500 text-white rounded px-2 py-1 text-xs w-full" />
+                          <input type="text" value={editFields.name} onChange={(e) => setEditFields((prev) => ({ ...prev, name: e.target.value }))} className="bg-slate-900 border border-amber-500 text-white rounded px-2 py-1 text-xs w-full" />
                         ) : (
                           <span className="text-white font-semibold">{r.Name_Room}</span>
                         )}
@@ -447,7 +455,7 @@ export default function SettingsClient() {
                       <td className="p-3 text-center text-amber-400 font-mono">{p.ID_Pallet}</td>
                       <td className="p-3">
                         {editingId === p.ID_Pallet ? (
-                          <input type="text" value={editFields.name} onChange={(e) => setEditFields({ ...editFields, name: e.target.value })} className="bg-slate-900 border border-amber-500 text-white rounded px-2 py-1 text-xs w-full" />
+                          <input type="text" value={editFields.name} onChange={(e) => setEditFields((prev) => ({ ...prev, name: e.target.value }))} className="bg-slate-900 border border-amber-500 text-white rounded px-2 py-1 text-xs w-full" />
                         ) : (
                           <span className="text-white font-semibold">{p.Name_Pallet}</span>
                         )}
@@ -473,7 +481,7 @@ export default function SettingsClient() {
                       <td className="p-3 text-center text-amber-400 font-mono">{c.ID_Category}</td>
                       <td className="p-3">
                         {editingId === c.ID_Category ? (
-                          <input type="text" value={editFields.name} onChange={(e) => setEditFields({ ...editFields, name: e.target.value })} className="bg-slate-900 border border-amber-500 text-white rounded px-2 py-1 text-xs w-full" />
+                          <input type="text" value={editFields.name} onChange={(e) => setEditFields((prev) => ({ ...prev, name: e.target.value }))} className="bg-slate-900 border border-amber-500 text-white rounded px-2 py-1 text-xs w-full" />
                         ) : (
                           <span className="text-white font-semibold">{c.Name_Category}</span>
                         )}
@@ -499,20 +507,20 @@ export default function SettingsClient() {
                       <td className="p-3 text-center text-amber-400 font-mono">{t.ID_EggType}</td>
                       <td className="p-3">
                         {editingId === t.ID_EggType ? (
-                          <input type="text" value={editFields.name} onChange={(e) => setEditFields({ ...editFields, name: e.target.value })} className="bg-slate-900 border border-amber-500 text-white rounded px-2 py-1 text-xs w-full" />
+                          <input type="text" value={editFields.name} onChange={(e) => setEditFields((prev) => ({ ...prev, name: e.target.value }))} className="bg-slate-900 border border-amber-500 text-white rounded px-2 py-1 text-xs w-full" />
                         ) : (
                           <span className="text-white font-semibold">{t.Name_EggType}</span>
                         )}
                       </td>
                       <td className="p-3 font-mono text-slate-400">
                         {editingId === t.ID_EggType ? (
-                          <select value={editFields.categoryId} onChange={(e) => setEditFields({ ...editFields, categoryId: Number(e.target.value) })} className="bg-slate-900 border border-amber-500 text-white rounded p-1 text-xs w-full cursor-pointer">
+                          <select value={editFields.categoryId} onChange={(e) => setEditFields((prev) => ({ ...prev, categoryId: Number(e.target.value) }))} className="bg-slate-900 border border-amber-500 text-white rounded p-1 text-xs w-full cursor-pointer">
                             {categories.map((c) => (
                               <option key={c.ID_Category} value={c.ID_Category}>{c.Name_Category}</option>
                             ))}
                           </select>
                         ) : (
-                          categories.find(c => c.ID_Category === t.ID_Category)?.Name_Category || t.ID_Category
+                          categoryMap.get(t.ID_Category) || t.ID_Category
                         )}
                       </td>
                       <td className="p-3 text-center flex justify-center gap-1.5">

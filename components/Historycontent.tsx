@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
-// 1. Interface โครงสร้างข้อมูลที่ส่งมาจาก API (Backend Response)
 interface ApiEggIntake {
   ID_Intake: number;
   CreateDate: string;
@@ -26,13 +25,12 @@ interface ApiTransaction {
   ReduceTray: number;
   ReduceQty: number;
   ReduceWeight: number;
-  TransactionType: string; // รับค่า 'ADD' หรือ 'REDUCE' จาก Database
+  TransactionType: string;
   Employee: string;
   ID_Intake: number;
   EggIntake: ApiEggIntake | null;
 }
 
-// 2. Interface สำหรับ Component ใช้งานใน Table & Search
 interface TransactionUI {
   ID_Transaction: number;
   TransactionDate: string;
@@ -54,7 +52,6 @@ interface TransactionUI {
 
 const PAGE_SIZE = 20;
 
-// Helper function แปลงวันที่เป็น DD/MM/YYYY HH:mm
 function formatDate(dateString: string, includeTime = false) {
   if (!dateString) return "-";
   const date = new Date(dateString);
@@ -73,7 +70,6 @@ function formatDate(dateString: string, includeTime = false) {
   return `${day}/${month}/${year}`;
 }
 
-// Helper function แปลงประเภทรายการ ADD / REDUCE เป็นภาษาไทย
 function getTransactionTypeLabel(type: string) {
   if (!type) return "-";
   const cleanType = String(type).trim().toUpperCase();
@@ -93,23 +89,28 @@ export default function HistoryContent() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
-  useEffect(() => {
-    fetchHistory();
-  }, []);
-
-  async function fetchHistory() {
+  const fetchHistory = useCallback(async (currentPage: number, searchTerm: string) => {
     setLoading(true);
-
     try {
-      const res = await fetch("/api/history");
+      const params = new URLSearchParams({
+        page: String(currentPage),
+        pageSize: String(PAGE_SIZE),
+      });
+
+      if (searchTerm) {
+        params.append("search", searchTerm);
+      }
+
+      const res = await fetch(`/api/history?${params.toString()}`);
       const json = await res.json();
 
       if (json.status === "success" && Array.isArray(json.data)) {
         const mappedData: TransactionUI[] = json.data.map((item: ApiTransaction) => {
           const intake = item.EggIntake;
 
-          // คำนวณเศษฟอง (Remainder)
           const stackEggs = (item.ReduceStack || 0) * 300;
           const trayEggs = (item.ReduceTray || 0) * 30;
           const totalQty = item.ReduceQty || 0;
@@ -138,39 +139,26 @@ export default function HistoryContent() {
         });
 
         setHistory(mappedData);
+        if (json.pagination) {
+          setTotalItems(json.pagination.totalItems);
+          setTotalPages(json.pagination.totalPages);
+        }
       }
     } catch (error) {
       console.error("Failed to fetch history:", error);
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
-  const filtered = useMemo(() => {
-    return history.filter((item) => {
-      const s = search.toLowerCase();
+  // Debounce search input to avoid spamming requests
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchHistory(page, search);
+    }, 300);
 
-      return (
-        item.TransactionDate.toLowerCase().includes(s) ||
-        item.TransactionTypeLabel.toLowerCase().includes(s) ||
-        item.Name_Pallet.toLowerCase().includes(s) ||
-        item.From_Location.toLowerCase().includes(s) ||
-        item.From_House.toLowerCase().includes(s) ||
-        item.From_Room.toLowerCase().includes(s) ||
-        item.Name_Category.toLowerCase().includes(s) ||
-        item.Name_EggType.toLowerCase().includes(s) ||
-        item.Employee.toLowerCase().includes(s) ||
-        item.TransactionType.toLowerCase().includes(s)
-      );
-    });
-  }, [history, search]);
-
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-
-  const currentData = filtered.slice(
-    (page - 1) * PAGE_SIZE,
-    page * PAGE_SIZE
-  );
+    return () => clearTimeout(timer);
+  }, [page, search, fetchHistory]);
 
   return (
     <div className="min-h-screen bg-[#020617] p-6 text-white font-sans">
@@ -190,7 +178,7 @@ export default function HistoryContent() {
             setSearch(e.target.value);
             setPage(1);
           }}
-          placeholder="ค้นหา (วันที่, ประเภท, พาเลท, ตำแหน่ง...)"
+          placeholder="ค้นหา (ผู้ทำรายการ, ประเภท)..."
           className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 w-full md:w-80 text-sm focus:border-amber-500 outline-none"
         />
       </div>
@@ -223,14 +211,14 @@ export default function HistoryContent() {
                   ⏳ กำลังโหลดข้อมูล...
                 </td>
               </tr>
-            ) : currentData.length === 0 ? (
+            ) : history.length === 0 ? (
               <tr>
                 <td colSpan={14} className="text-center p-12 text-slate-500">
                   🚫 ไม่พบข้อมูลประวัติรายการ
                 </td>
               </tr>
             ) : (
-              currentData.map((item) => {
+              history.map((item) => {
                 const isAdd = item.TransactionType?.toUpperCase() === "ADD";
                 const isReduce = item.TransactionType?.toUpperCase() === "REDUCE";
 
@@ -291,18 +279,18 @@ export default function HistoryContent() {
         </table>
       </div>
 
-      {/* Pagination */}
+      {/* Pagination Controls */}
       <div className="flex justify-between items-center mt-5 text-xs text-slate-400">
         <div>
-          แสดงข้อมูล {filtered.length > 0 ? (page - 1) * PAGE_SIZE + 1 : 0} ถึง{" "}
-          {Math.min(page * PAGE_SIZE, filtered.length)} จากทั้งหมด{" "}
-          <strong className="text-white">{filtered.length}</strong> รายการ
+          แสดงข้อมูล {totalItems > 0 ? (page - 1) * PAGE_SIZE + 1 : 0} ถึง{" "}
+          {Math.min(page * PAGE_SIZE, totalItems)} จากทั้งหมด{" "}
+          <strong className="text-white">{totalItems}</strong> รายการ
         </div>
 
         <div className="flex items-center gap-2">
           <button
             onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page === 1}
+            disabled={page === 1 || loading}
             className="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-slate-800 transition"
           >
             Previous
@@ -314,7 +302,7 @@ export default function HistoryContent() {
 
           <button
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page === totalPages || totalPages === 0}
+            disabled={page === totalPages || totalPages === 0 || loading}
             className="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-slate-800 transition"
           >
             Next

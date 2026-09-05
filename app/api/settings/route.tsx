@@ -8,55 +8,76 @@ interface TableConfig {
   ascending?: boolean;
 }
 
-const ALLOWED_TABLES: Record<string, TableConfig> = {
-  eggcategory: {
-    tableName: 'EggCategory',
-    primaryKey: 'ID_Category',
-    orderBy: 'ID_Category',
-    ascending: true,
-  },
-  eggtype: {
-    tableName: 'EggType',
-    primaryKey: 'ID_EggType',
-    orderBy: 'ID_EggType',
-    ascending: true,
-  },
-  employee: {
-    tableName: 'Employee',
-    primaryKey: 'Email', // ใช้ Email เป็น Primary Key ตรงตามฐานข้อมูลจริง
-    orderBy: 'created_at',
-    ascending: false,
-  },
-  house: {
-    tableName: 'House',
-    primaryKey: 'ID_House',
-    orderBy: 'ID_House',
-    ascending: true,
-  },
-  location: {
-    tableName: 'LocationStock',
-    primaryKey: 'ID_Location',
-    orderBy: 'ID_Location',
-    ascending: true,
-  },
-  pallet: {
-    tableName: 'Pallet',
-    primaryKey: 'ID_Pallet',
-    orderBy: 'ID_Pallet',
-    ascending: true,
-  },
-  room: {
-    tableName: 'Room',
-    primaryKey: 'ID_Room',
-    orderBy: 'ID_Room',
-    ascending: true,
-  },
-};
+// ใช้ Map เพื่อเพิ่มความเร็วในการ Lookup Key
+const ALLOWED_TABLES = new Map<string, TableConfig>([
+  [
+    'eggcategory',
+    {
+      tableName: 'EggCategory',
+      primaryKey: 'ID_Category',
+      orderBy: 'ID_Category',
+      ascending: true,
+    },
+  ],
+  [
+    'eggtype',
+    {
+      tableName: 'EggType',
+      primaryKey: 'ID_EggType',
+      orderBy: 'ID_EggType',
+      ascending: true,
+    },
+  ],
+  [
+    'employee',
+    {
+      tableName: 'Employee',
+      primaryKey: 'Email',
+      orderBy: 'created_at',
+      ascending: false,
+    },
+  ],
+  [
+    'house',
+    {
+      tableName: 'House',
+      primaryKey: 'ID_House',
+      orderBy: 'ID_House',
+      ascending: true,
+    },
+  ],
+  [
+    'location',
+    {
+      tableName: 'LocationStock',
+      primaryKey: 'ID_Location',
+      orderBy: 'ID_Location',
+      ascending: true,
+    },
+  ],
+  [
+    'pallet',
+    {
+      tableName: 'Pallet',
+      primaryKey: 'ID_Pallet',
+      orderBy: 'ID_Pallet',
+      ascending: true,
+    },
+  ],
+  [
+    'room',
+    {
+      tableName: 'Room',
+      primaryKey: 'ID_Room',
+      orderBy: 'ID_Room',
+      ascending: true,
+    },
+  ],
+]);
 
 function getTableConfig(tab: string | null): TableConfig | null {
   if (!tab) return null;
-  const key = tab.toLowerCase().trim();
-  return ALLOWED_TABLES[key] || null;
+  return ALLOWED_TABLES.get(tab.toLowerCase().trim()) || null;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -69,8 +90,8 @@ function getErrorMessage(error: unknown): string {
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const tab = searchParams.get('tab');
+    // ใช้ request.nextUrl โดยตรง เร็วกว่า new URL()
+    const tab = request.nextUrl.searchParams.get('tab');
     const config = getTableConfig(tab);
 
     if (!config) {
@@ -82,10 +103,11 @@ export async function GET(request: NextRequest) {
 
     const supabase = await createClient();
 
-    const { data, error } = await supabase
-      .from(config.tableName as 'EggCategory')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any)
+      .from(config.tableName)
       .select('*')
-      .order(config.orderBy as never, { ascending: config.ascending ?? true });
+      .order(config.orderBy, { ascending: config.ascending ?? true });
 
     if (error) throw error;
 
@@ -120,19 +142,20 @@ export async function POST(request: Request) {
       );
     }
 
-    // กรองค่าที่เป็น null, undefined หรือ string ว่างออก
     const cleanedData: Record<string, unknown> = {};
-    Object.keys(data).forEach((key) => {
-      if (data[key] !== undefined && data[key] !== null && data[key] !== '') {
-        cleanedData[key] = data[key];
+    for (const key in data) {
+      const val = data[key];
+      if (val !== undefined && val !== null && val !== '') {
+        cleanedData[key] = val;
       }
-    });
+    }
 
     const supabase = await createClient();
 
-    const { data: insertedData, error } = await supabase
-      .from(config.tableName as 'EggCategory')
-      .insert(cleanedData as never)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: insertedData, error } = await (supabase as any)
+      .from(config.tableName)
+      .insert(cleanedData)
       .select();
 
     if (error) throw error;
@@ -174,10 +197,11 @@ export async function PUT(request: Request) {
 
     const supabase = await createClient();
 
-    const { data: updatedData, error } = await supabase
-      .from(config.tableName as 'EggCategory')
-      .update(data as never)
-      .eq(targetKey as never, idValue)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: updatedData, error } = await (supabase as any)
+      .from(config.tableName)
+      .update(data)
+      .eq(targetKey, idValue)
       .select();
 
     if (error) throw error;
@@ -197,10 +221,9 @@ export async function PUT(request: Request) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const tab = searchParams.get('tab');
-    const idValue = searchParams.get('idValue');
-    let idColumn = searchParams.get('idColumn');
+    const tab = request.nextUrl.searchParams.get('tab');
+    const idValue = request.nextUrl.searchParams.get('idValue');
+    const idColumn = request.nextUrl.searchParams.get('idColumn');
 
     const config = getTableConfig(tab);
     if (!config || !idValue) {
@@ -210,16 +233,14 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    if (!idColumn) {
-      idColumn = config.primaryKey;
-    }
-
+    const targetKey = idColumn || config.primaryKey;
     const supabase = await createClient();
 
-    const { error } = await supabase
-      .from(config.tableName as 'EggCategory')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any)
+      .from(config.tableName)
       .delete()
-      .eq(idColumn as never, idValue);
+      .eq(targetKey, idValue);
 
     if (error) throw error;
 
