@@ -34,7 +34,13 @@ export default function Navbar({
       <div className="relative mx-auto flex h-16 max-w-7xl items-center px-4 lg:px-8">
         <Link href="/dashboard" className="flex items-center gap-3">
           <div className="relative h-10 w-10 md:h-12 md:w-12">
-            <Image src="/Images/logo.jpg" alt="EggStock Logo" fill priority className="object-contain" />
+            <Image
+              src="/Images/logo.jpg"
+              alt="EggStock Logo"
+              fill
+              priority
+              className="object-contain"
+            />
           </div>
           <div className="hidden lg:flex flex-col">
             <h1 className="text-xl font-bold text-yellow-500">EggStock</h1>

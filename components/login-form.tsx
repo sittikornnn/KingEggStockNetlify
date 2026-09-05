@@ -58,10 +58,11 @@ export function LoginForm() {
           <Image
             src="/Images/logo.jpg"
             alt="EggStock Logo"
-            fill
-            priority
+            width={112}
+            height={112}
+            priority // ช่วยเร่งการโหลด LCP
             sizes="112px"
-            className="object-fill scale-105"
+            className="object-cover"
           />
         </div>
         <h1 className="text-xl font-semibold tracking-tight">EggStock</h1>
